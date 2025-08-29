@@ -1,0 +1,170 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
+import pytesseract
+import requests
+from io import BytesIO
+import os
+import sys
+from bs4 import BeautifulSoup
+
+# Configure Tesseract path if needed
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+root = tk.Tk()
+root.title("Image to Text OCR")
+root.geometry("750x700")
+
+selected_image_path = None
+
+
+def select_image():
+    global selected_image_path
+    file_path = filedialog.askopenfilename(
+        filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.tiff")]
+    )
+    if file_path:
+        load_image(file_path)
+
+
+def fetch_image_from_url(url):
+    """Fetch an image from URL (handles direct and indirect like Google Images/Drive)."""
+    try:
+        response = requests.get(url, stream=True, headers={"User-Agent": "Mozilla/5.0"})
+        content_type = response.headers.get("Content-Type", "")
+
+        # If it's a direct image link
+        if "image" in content_type:
+            return Image.open(BytesIO(response.content))
+
+        # Otherwise, try to scrape the page for <img> tags
+        soup = BeautifulSoup(response.text, "html.parser")
+        img_tag = soup.find("img")
+        if img_tag and img_tag.get("src"):
+            img_url = img_tag["src"]
+            if not img_url.startswith("http"):
+                # Make absolute URL if relative
+                from urllib.parse import urljoin
+                img_url = urljoin(url, img_url)
+            img_response = requests.get(img_url, stream=True)
+            if "image" in img_response.headers.get("Content-Type", ""):
+                return Image.open(BytesIO(img_response.content))
+
+        raise ValueError("Could not find a valid image in the provided URL.")
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch image: {e}")
+
+
+def load_image(path):
+    global selected_image_path
+    selected_image_path = path.strip()
+
+    try:
+        if path.startswith(("http://", "https://")):
+            img = fetch_image_from_url(path)
+        else:
+            img = Image.open(path)
+
+        # Show image dimensions
+        width, height = img.size
+        dim_label.config(text=f"Image Dimensions: {width} x {height} px")
+
+        img.thumbnail((300, 300), Image.Resampling.LANCZOS)
+        tk_img = ImageTk.PhotoImage(img)
+        img_label.config(image=tk_img)
+        img_label.image = tk_img
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not load image:\n{e}")
+
+
+def process_image():
+    if not selected_image_path:
+        messagebox.showwarning("No image", "Please select or paste an image URL first.")
+        return
+
+    try:
+        if selected_image_path.startswith(("http://", "https://")):
+            img = fetch_image_from_url(selected_image_path)
+        else:
+            img = Image.open(selected_image_path)
+
+        text = pytesseract.image_to_string(img)
+
+        # Clean text
+        text = text.strip()
+
+        output_text.delete("1.0", tk.END)
+        output_text.insert(tk.END, text)
+
+        words = len(text.split())
+        chars = len(text)
+        stats_label.config(text=f"Words: {words} | Characters: {chars}")
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not process image:\n{e}")
+
+
+def save_to_file():
+    if not output_text.get("1.0", tk.END).strip():
+        messagebox.showwarning("No text", "No text to save.")
+        return
+    save_path = filedialog.asksaveasfilename(defaultextension=".txt",
+                                             filetypes=[("Text files", "*.txt")])
+    if save_path:
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(output_text.get("1.0", tk.END).strip())
+
+        # Cross-platform open
+        if sys.platform == "win32":
+            os.startfile(save_path)
+        elif sys.platform == "darwin":  # macOS
+            os.system(f"open {save_path}")
+        else:  # Linux
+            os.system(f"xdg-open {save_path}")
+
+
+def copy_to_clipboard():
+    text = output_text.get("1.0", tk.END).strip()
+    if text:
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        messagebox.showinfo("Copied", "Text copied to clipboard.")
+
+
+# --- UI Elements ---
+frame_top = tk.Frame(root)
+frame_top.pack(pady=10)
+
+tk.Label(frame_top, text="Enter Image URL or Path:").pack()
+url_entry = tk.Entry(frame_top, width=60)
+url_entry.pack(side=tk.LEFT, padx=5)
+tk.Button(frame_top, text="Load", command=lambda: load_image(url_entry.get())).pack(side=tk.LEFT)
+tk.Button(frame_top, text="Browse", command=select_image).pack(side=tk.LEFT)
+
+dim_label = tk.Label(root, text="Image Dimensions: N/A")
+dim_label.pack()
+
+img_label = tk.Label(root)
+img_label.pack(pady=5)
+
+tk.Button(root, text="Extract Text", command=process_image, width=20).pack(pady=5)
+
+output_text = tk.Text(root, wrap="word", height=12, width=80, font=("Arial", 10))
+output_text.pack(padx=10, pady=5)
+
+stats_label = tk.Label(root, text="Words: 0 | Characters: 0")
+stats_label.pack()
+
+# Bottom buttons
+frame_bottom = tk.Frame(root)
+frame_bottom.pack(pady=10)
+
+tk.Button(frame_bottom, text="Save to File", command=save_to_file, width=15).pack(side=tk.LEFT, padx=5)
+tk.Button(frame_bottom, text="Copy Text", command=copy_to_clipboard, width=15).pack(side=tk.LEFT, padx=5)
+tk.Button(frame_bottom, text="Cancel", command=root.destroy, width=15).pack(side=tk.LEFT, padx=5)
+
+root.mainloop()
+"C:\Users\sachi\OneDrive\Pictures\Screenshots\Screenshot (51).png"
+
